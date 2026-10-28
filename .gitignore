@@ -1,0 +1,26 @@
+# SentinelOps AI
+.env
+.env.local
+.venv
+venv/
+*.pyc
+__pycache__/
+*.sqlite
+*.db
+.sentinelops/
+coverage/
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+.next/
+out/
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml

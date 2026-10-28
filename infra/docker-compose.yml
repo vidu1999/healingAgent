@@ -1,0 +1,111 @@
+# SentinelOps AI - Docker Compose (production-style local deployment).
+#
+# Security posture:
+# - PostgreSQL is the production database (SQLite remains the dev fallback).
+# - Ollama runs locally; no paid cloud AI is ever contacted (AI_CLOUD_FALLBACK=false).
+# - Backend/frontend talk over the internal compose network; no AI or DB ports
+#   are exposed to the host unless explicitly enabled below.
+# - Docker isolation is a security boundary, not a perfect sandbox: treat each
+#   container as potentially compromised and enforce least privilege at the
+#   host/orchestrator layer (resource limits, non-root users, read-only FS where
+#   practical).
+#
+# Usage:
+#   cp .env.example .env        # edit secrets (never commit .env)
+#   docker compose up -d
+#
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: sentinelops-postgres
+    environment:
+      POSTGRES_USER: sentinelops
+      POSTGRES_PASSWORD: sentinelops        # CHANGE ME in production
+      POSTGRES_DB: sentinelops
+    volumes:
+      - sentinelops-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinelops -d sentinelops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sentinelops
+    # DB port intentionally not published to the host by default.
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sentinelops-ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - sentinelops-ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:11434/api/tags"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sentinelops
+    # Ollama port intentionally not published to the host by default;
+    # the backend reaches it via the compose network name "ollama".
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+        reservations:
+          memory: 2g
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: sentinelops-backend
+    env_file:
+      - ../backend/.env
+    environment:
+      # Override for compose networking; individual values still come from .env.
+      DATABASE_URL: postgresql+psycopg://sentinelops:sentinelops@postgres:5432/sentinelops
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    networks:
+      - sentinelops
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    # Non-root user is set in the Dockerfile.
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    container_name: sentinelops-frontend
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8000/api/v1
+    ports:
+      - "3000:3000"
+    networks:
+      - sentinelops
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+volumes:
+  sentinelops-postgres-data:
+  sentinelops-ollama-data:
+
+networks:
+  sentinelops:
+    driver: bridge
